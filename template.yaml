@@ -1,0 +1,91 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: Lambda function that tags your other Lambda Functions with auto-delete:no
+
+Resources:
+
+  MyLambdaFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: lambda-tag-policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:TagResource
+                  - lambda:GetFunction
+                  - logs:CreateLogGroup
+                  - logs:PutLogEvents
+                  - logs:CreateLogStream
+                Resource: "*"
+
+  MyLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+          lambda_client  = boto3.client('lambda')
+          
+          def lambda_handler(event, context):
+              
+              print(event)
+              
+              #Get the function
+              function_arn = event['detail']['requestParameters']['functionName']
+              response = lambda_client.get_function(FunctionName=function_arn)
+              
+              #Get the ARN
+              lambdaArn = response['Configuration']['FunctionArn']
+              print(lambdaArn)
+              
+              #Tag Function
+              tag_response = lambda_client.tag_resource(
+                  Resource=lambdaArn,
+                  Tags={'auto-delete': 'no'}
+              )
+              print(tag_response)
+
+
+      Handler: index.lambda_handler
+      Role: !GetAtt MyLambdaFunctionRole.Arn
+      Runtime: python3.12
+      Timeout: 5
+      Tags:
+        - Key: 'auto-delete'
+          Value: 'no'
+
+  eventBridgePermissions:
+    Type: AWS::Lambda::Permission
+    Properties: 
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt MyLambdaFunction.Arn
+      Principal: events.amazonaws.com
+
+  MyEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern:
+        source:
+          - aws.lambda
+        detail-type:
+          - AWS API Call via CloudTrail
+        detail:
+          eventSource:
+            - lambda.amazonaws.com
+          eventName:
+            - CreateFunction20150331
+      Targets:
+        - Arn: !GetAtt MyLambdaFunction.Arn
+          Id: TagLambdaFunction
